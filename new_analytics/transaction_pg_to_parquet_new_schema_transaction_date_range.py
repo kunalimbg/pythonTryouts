@@ -26,6 +26,7 @@ DB_PASSWORD = '6:?wH564}Ueh'
 BATCH_INTERVAL = timedelta(minutes=10)
 BASE_OUTPUT_DIR = 'new_analytics/transaction'
 BASE_OUTPUT_DIR_BUNDLE = "new_analytics/bundleTxnLink"
+BASE_OUTPUT_DIR_TXN_BUNDLE_PRODUCT_LINKS = "new_analytics/txnBundleProductLink"
 
 def parse_date(date_str):
     return datetime.strptime(date_str, "%d-%m-%y").date()
@@ -108,7 +109,7 @@ def wrap_row(row):
         print(f"⚠️ Skipping row due to error: {e}")
         return None
 
-def process_date(target_date, cur):
+def process_date(target_date, cur, cur_local):
     next_day = target_date + timedelta(days=1)
 
     cur.execute(
@@ -124,13 +125,14 @@ def process_date(target_date, cur):
     min_ts, max_ts = cur.fetchone()
     if not min_ts or not max_ts:
         print(f"❌ No transactions found for {target_date}")
-        return 0, 0
+        return 0, 0, 0  # Always return 3 values
 
     print(f"📅 Time range for {target_date}: {min_ts} to {max_ts}")
     current_start = min_ts
     batch_num = 1
     transaction_count = 0
     bundle_count = 0
+    txn_bundle_product_count = 0
 
     while current_start < max_ts:
         current_end = current_start + BATCH_INTERVAL
@@ -147,6 +149,7 @@ def process_date(target_date, cur):
         batch_data = [wrap_row(row) for row in rows]
         batch_data = [row for row in batch_data if row is not None]
 
+        # Deduplicate within the batch by transaction_id
         seen_tx_ids = set()
         deduped_data = []
         for row in batch_data:
@@ -160,6 +163,7 @@ def process_date(target_date, cur):
             df = pd.DataFrame(batch_data)
             df["data"] = df["data"].apply(json.dumps)
 
+            # Save transaction parquet
             dir_path = os.path.join(
                 BASE_OUTPUT_DIR,
                 f"year={current_start.year}",
@@ -175,37 +179,84 @@ def process_date(target_date, cur):
             print(f"✅ Wrote {len(df)} rows to {file_path}")
             transaction_count += len(df)
 
+            # Prepare bundle and tbp links
+            txn_bundle_product_links = []
             bundle_records = []
+
             for row in batch_data:
+                payload = row.get("data")
+                timestamp = row.get("timestamp")
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+
+                shopify_store_id = row.get("shopify_store_id", "")
+                transaction_id = row.get("transaction_id")
+
+                for item in payload.get("line_items", []):
+                    qty = item.get("quantity", 1)
+                    unit_price = float(item.get("price_set", {}).get("shop_money", {}).get("amount", 0))
+                    discount_total = sum([
+                        float(d.get("amount_set", {}).get("shop_money", {}).get("amount", 0))
+                        for d in item.get("discount_allocations", [])
+                    ])
+                    unit_discount = discount_total / qty if qty else 0
+                    net_unit_price = unit_price - unit_discount
+                    is_bundle, bundle_id = extract_bundle_info(item.get("properties", []))
+
+                    product_id = item.get("product_id", "")
+                    if not product_id:
+                        continue
+
+                    product_url = ""
+                    if is_bundle:
+                        cur_local.execute(
+                                """
+                                SELECT product_url
+                                FROM bundle_data
+                                WHERE bundle_id = %s AND product_id = '%s'
+                                """,
+                            (bundle_id, product_id)
+                        )
+                        bundle_map = cur_local.fetchone()
+
+                        product_url = bundle_map[0] if bundle_map else item.get("product_url", "")
+                    txn_bundle_product_links.append({
+                        "transaction_id": transaction_id,
+                        "bundle_id": bundle_id if is_bundle else None,
+                        "product_id": product_id,
+                        "product_name": item.get("title"),
+                        "product_url": product_url,
+                        "shopify_store_id": shopify_store_id,
+                        "product_unit_amount": round_two_places(unit_price) if unit_price else 0.0,
+                        "product_quantity": qty,
+                        "product_total_amount": round_two_places(unit_price * qty) if unit_price else 0.0,
+                        "product_discount_amount": round_two_places(unit_discount * qty) if unit_discount else 0.0,
+                        "product_net_amount": round_two_places(net_unit_price * qty) if net_unit_price else 0.0,
+                        "timestamp": timestamp,
+                    })
+
+                # Bundle sales
                 try:
-                    payload = row.get("data")
-                    timestamp = row.get("timestamp")
-
-                    if isinstance(payload, str):
-                        payload = json.loads(payload)
-
                     line_items = payload.get("line_items", [])
                     bundle_sales, _ = calculate_bundle_sales_and_subtotal(line_items)
-
                     for bundle_id, amount in bundle_sales.items():
                         bundle_records.append({
                             "id": payload.get("id") - randint(1, 999999),
-                            "transaction_id": row.get("transaction_id"),
+                            "transaction_id": transaction_id,
                             "currency": row.get("currency"),
-                            "shopify_store_id": row.get("shopify_store_id"),
+                            "shopify_store_id": shopify_store_id,
                             "bundle_id": bundle_id,
                             "sales": amount,
                             "timestamp": timestamp,
                             "bundle_sale": amount
                         })
-
                 except Exception as e:
                     print(f"⚠️ Error processing bundle sales: {e}")
                     continue
 
+            # Save bundles
             if bundle_records:
                 bundle_df = pd.DataFrame(bundle_records)
-
                 bundle_dir = os.path.join(
                     BASE_OUTPUT_DIR_BUNDLE,
                     f"year={current_start.year}",
@@ -224,10 +275,30 @@ def process_date(target_date, cur):
             else:
                 print("⚠️ No bundle sales data in this batch.")
 
+            # Save tbp links
+            if txn_bundle_product_links:
+                tbp_dir = os.path.join(
+                    BASE_OUTPUT_DIR_TXN_BUNDLE_PRODUCT_LINKS,
+                    f"year={current_start.year}",
+                    f"month={current_start.month:02}",
+                    f"day={current_start.day:02}",
+                    f"hour={current_start.hour:02}"
+                )
+                os.makedirs(tbp_dir, exist_ok=True)
+                tbp_filename = f"transaction_bundle_product_links_{current_start.hour:02}_{current_start.minute:02}.parquet"
+                tbp_path = os.path.join(tbp_dir, tbp_filename)
+                tbp_df = pd.DataFrame(txn_bundle_product_links)
+                tbp_df.to_parquet(tbp_path, index=False)
+                print(f"✅ Wrote {len(tbp_df)} transaction_bundle_product_links rows to {tbp_path}")
+                txn_bundle_product_count += len(tbp_df)
+            else:
+                print("⚠️ No transaction_bundle_product_links generated in this batch.")
+
         current_start = current_end
         batch_num += 1
 
-    return transaction_count, bundle_count
+    return transaction_count, bundle_count, txn_bundle_product_count
+
 
 # ----------------- Main Execution -----------------
 if __name__ == "__main__":
@@ -261,19 +332,30 @@ if __name__ == "__main__":
             user=DB_USER,
             password=DB_PASSWORD
         )
+        
+        conn_local = psycopg2.connect(
+        host='localhost',
+        port=5432,
+        database="postgres",
+        user="postgres",
+        password="postgres"
+    )
         print("✅ Connected to PostgreSQL")
 
-        cur = conn.cursor()
+        cur = conn.cursor() 
+        cur_local = conn_local.cursor()
 
         total_transaction_count = 0
         total_bundle_count = 0
+        total_txn_bundle_product_count = 0
 
         current_date = start_date
         while current_date <= end_date:
             print(f"\n🚀 Processing date: {current_date}")
-            txn_count, bundle_count = process_date(current_date, cur)
+            txn_count, bundle_count, tbp_count = process_date(current_date, cur, cur_local)
             total_transaction_count += txn_count
             total_bundle_count += bundle_count
+            total_txn_bundle_product_count += tbp_count
             current_date += timedelta(days=1)
 
         cur.close()
@@ -284,5 +366,6 @@ if __name__ == "__main__":
     print(f"⏱️ Total time taken: {elapsed_time:.2f} seconds")
     print(f"📦 Total transaction record count: {total_transaction_count}")
     print(f"🎁 Total bundleTxnLink record count: {total_bundle_count}")
+    print(f"🛍️ Total transaction_bundle_product_links record count: {total_txn_bundle_product_count}")
 
-    # python3 ./new_analytics/transaction_pg_to_parquet_new_schema_transaction_working.py --start_date 16-05-25 --end_date 15-08-25
+    # python3 ./new_analytics/transaction_pg_to_parquet_new_schema_transaction_working.py --start_date 09-05-25 --end_date 15-08-25

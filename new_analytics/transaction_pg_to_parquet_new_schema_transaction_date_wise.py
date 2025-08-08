@@ -25,6 +25,7 @@ DB_PASSWORD = '6:?wH564}Ueh'
 BATCH_INTERVAL = timedelta(minutes=10)
 BASE_OUTPUT_DIR = 'new_analytics/transaction'
 BASE_OUTPUT_DIR_BUNDLE = "new_analytics/bundleTxnLink"
+BASE_OUTPUT_DIR_TXN_BUNDLE_PRODUCT_LINKS = "new_analytics/txnBundleProductLink"
 
 def extract_shopify_store_id(data):
     from re import search
@@ -126,12 +127,21 @@ with SSHTunnelForwarder(
         user=DB_USER,
         password=DB_PASSWORD
     )
+    
+    conn_local = psycopg2.connect(
+        host='localhost',
+        port=5432,
+        database="postgres",
+        user="postgres",
+        password="postgres"
+    )
     print("✅ Connected to PostgreSQL")
 
     cur = conn.cursor()
+    cur_local = conn_local.cursor()
 
     # Get min and max of createdAt
-    target_date = date(2025, 8, 3)  # Change this to your desired date
+    target_date = date(2025, 8, 7)  # Change this to your desired date
     next_day = target_date + timedelta(days=1)
 
     cur.execute(
@@ -151,6 +161,7 @@ with SSHTunnelForwarder(
     batch_num = 1
     total_transaction_count = 0
     total_bundle_count = 0
+    total_txn_bundle_product_count = 0
 
     while current_start < max_ts:
         current_end = current_start + BATCH_INTERVAL
@@ -194,19 +205,69 @@ with SSHTunnelForwarder(
             filename = f"order_payload_{current_start.hour:02}_{current_start.minute:02}.parquet"
             file_path = os.path.join(dir_path, filename)
             df.to_parquet(file_path, index=False)
-            print(f"✅ Wrote {len(df)} rows to {file_path}")
-            total_transaction_count += len(df)
+            
+            # 🆕 Transaction-Bundle-Product Link Extraction
+            txn_bundle_product_links = []
+            bundle_records = []
+           
+            for row in batch_data:
+                payload = row.get("data")
+                timestamp = row.get("timestamp")
+
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+
+                shopify_store_id = row.get("shopify_store_id", "")
+                transaction_id = row.get("transaction_id")
+
+                for item in payload.get("line_items", []):
+                    qty = item.get("quantity", 1)
+                    unit_price = float(item.get("price_set", {}).get("shop_money", {}).get("amount", 0))
+                    discount_total = sum([
+                        float(d.get("amount_set", {}).get("shop_money", {}).get("amount", 0))
+                        for d in item.get("discount_allocations", [])
+                    ])
+                    unit_discount = discount_total / qty if qty else 0
+                    net_unit_price = unit_price - unit_discount
+                    is_bundle, bundle_id = extract_bundle_info(item.get("properties", []))
+                    # if not (is_bundle and bundle_id):
+                    #     continue
+
+                    product_id = (item.get("product_id", ""))
+                    if not product_id:
+                        continue
+                    product_url = ""
+                    if is_bundle:
+                        cur_local.execute(
+                                """
+                                SELECT product_url
+                                FROM bundle_data
+                                WHERE bundle_id = %s AND product_id = '%s'
+                                """,
+                            (bundle_id, product_id)
+                        )
+                        bundle_map = cur_local.fetchone()
+
+                        product_url = bundle_map[0] if bundle_map else item.get("product_url", "")
+                    txn_bundle_product_links.append({
+                        "transaction_id": transaction_id,
+                        "bundle_id": bundle_id if is_bundle else None,
+                        "product_id": product_id,
+                        "product_name": item.get("title"),
+                        "product_url": product_url, 
+                        "shopify_store_id": shopify_store_id,
+                        "product_unit_amount": round_two_places(unit_price) if unit_price else 0.0,
+                        "product_quantity": qty,
+                        "product_total_amount": round_two_places(unit_price * qty) if unit_price else 0.0,
+                        "product_discount_amount": round_two_places(unit_discount * qty) if unit_discount else 0.0,
+                        "product_net_amount": round_two_places(net_unit_price * qty) if net_unit_price else 0.0,
+                        "timestamp": timestamp,
+                    })
+
+           
 
             # ----- [2] Extract and write bundle sales to bundleTxnLink output -----
-            bundle_records = []
-            for row in batch_data:
                 try:
-                    payload = row.get("data")
-                    timestamp = row.get("timestamp")
-
-                    if isinstance(payload, str):
-                        payload = json.loads(payload)
-
                     line_items = payload.get("line_items", [])
                     bundle_sales, _ = calculate_bundle_sales_and_subtotal(line_items)
 
@@ -246,6 +307,29 @@ with SSHTunnelForwarder(
                 total_bundle_count += len(bundle_df)
             else:
                 print("⚠️ No bundle sales data in this batch.")
+                
+            if txn_bundle_product_links:
+                tbp_dir = os.path.join(
+                    BASE_OUTPUT_DIR_TXN_BUNDLE_PRODUCT_LINKS,
+                    f"year={current_start.year}",
+                    f"month={current_start.month:02}",
+                    f"day={current_start.day:02}",
+                    f"hour={current_start.hour:02}"
+                )
+                os.makedirs(tbp_dir, exist_ok=True)
+                tbp_filename = f"transaction_bundle_product_links_{current_start.hour:02}_{current_start.minute:02}.parquet"
+                tbp_path = os.path.join(tbp_dir, tbp_filename)
+
+                tbp_df = pd.DataFrame(txn_bundle_product_links)
+                tbp_df.to_parquet(tbp_path, index=False)
+
+                print(f"✅ Wrote {len(tbp_df)} transaction_bundle_product_links rows to {tbp_path}")
+                total_txn_bundle_product_count += len(tbp_df)
+            else:
+                print("⚠️ No transaction_bundle_product_links generated in this batch.")
+
+            # print(f"✅ Wrote {len(df)} rows to {file_path}")
+            total_transaction_count += len(df)
 
         current_start = current_end
         batch_num += 1
@@ -258,3 +342,4 @@ with SSHTunnelForwarder(
     # ⭐️ Final record summary
     print(f"📦 Total transaction record count: {total_transaction_count}")
     print(f"🎁 Total bundleTxnLink record count: {total_bundle_count}")
+    print(f"🎁 Total transaction_bundle_product_links record count: {total_txn_bundle_product_count}")
