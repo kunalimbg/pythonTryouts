@@ -13,6 +13,14 @@ DB_CONFIG = {
     "password": "postgres"
 }
 
+# DB_CONFIG = {
+#     "host": "localhost",
+#     "port": 5434,
+#     "dbname": "yrtk-analytics",
+#     "user": "pintoadminpg321op",
+#     "password": "fU~e|d911@71"
+# }
+
 def extract_shopify_id(gid):
     """Extract numeric product ID from Shopify GID"""
     return gid.strip().split("/")[-1]
@@ -65,7 +73,7 @@ def main():
     failed_bundles = []
 
     # Load bundle IDs
-    with open("BundlesIds.json") as f:
+    with open("/home/kunal/learn/pythonTryouts/bundles_code/BundlesIds.json") as f:
         data = json.load(f)
         bundle_ids = data.get("BundlesId's", [])
 

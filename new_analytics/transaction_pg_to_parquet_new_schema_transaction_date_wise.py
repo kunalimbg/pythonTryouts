@@ -41,7 +41,7 @@ def extract_bundle_info(properties):
         name = prop.get("name")
         value = prop.get("value")
 
-        if name == "_isYtCustomBundle":
+        if name == "_isYtCustomBundle" or name == "_isYtBundle":
             if isinstance(value, bool):
                 is_bundle = value
             elif isinstance(value, str):
@@ -71,7 +71,7 @@ def calculate_bundle_sales_and_subtotal(line_items):
         qty = item.get("quantity", 1)
 
         is_bundle, bundle_id = extract_bundle_info(item.get("properties", []))
-        total_item_amount = qty * (price - discount)
+        total_item_amount = (qty * price) - discount
 
         if is_bundle and bundle_id:
             bundle_sales[bundle_id] = bundle_sales.get(bundle_id, 0.0) + total_item_amount
@@ -141,7 +141,7 @@ with SSHTunnelForwarder(
     cur_local = conn_local.cursor()
 
     # Get min and max of createdAt
-    target_date = date(2025, 8, 7)  # Change this to your desired date
+    target_date = date(2025, 8, 11)  # Change this to your desired date
     next_day = target_date + timedelta(days=1)
 
     cur.execute(
@@ -257,6 +257,7 @@ with SSHTunnelForwarder(
                         "product_url": product_url, 
                         "shopify_store_id": shopify_store_id,
                         "product_unit_amount": round_two_places(unit_price) if unit_price else 0.0,
+                        "product_unit_discount_amount": round_two_places(unit_discount) if unit_discount else 0.0,
                         "product_quantity": qty,
                         "product_total_amount": round_two_places(unit_price * qty) if unit_price else 0.0,
                         "product_discount_amount": round_two_places(unit_discount * qty) if unit_discount else 0.0,

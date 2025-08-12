@@ -5,10 +5,15 @@ from azure.storage.blob import BlobServiceClient, ContentSettings
 # Azure Blob Storage configuration
 AZURE_STORAGE_CONNECTION_STRING = "DefaultEndpointsProtocol=https;AccountName=yrtkstorage;AccountKey=BJCHt2R7+U6H33v/YYZJ9//ntWEYpbnhW6ddPfA7u4Q6nd3wrdF9jKtAoSgl27w1D1tTD6FWjewp+AStfBM6DQ==;EndpointSuffix=core.windows.net"
 CONTAINER_NAME = "mycont"
-# LOCAL_DIRECTORY = "new_analytics/bundleTxnLink/year=2025/month=08/day=07"  # Base local directory
-# LOCAL_DIRECTORY = "new_analytics/transaction/year=2025/month=08/day=07"  # Base local directory
-LOCAL_DIRECTORY = "new_analytics/txnBundleProductLink/year=2025/month=08/day=07"  # Base local directory
-# LOCAL_DIRECTORY = "transaction/year=2025/month=05/day=27"  # Base local directory
+# LOCAL_DIRECTORY = "new_analytics/bundleTxnLink/year=2025/month=08/day=11"  # Base local directory
+# LOCAL_DIRECTORY = "new_analytics/transaction/year=2025/month=08/day=11"  # Base local directory
+# LOCAL_DIRECTORY = "new_analytics/txnBundleProductLink/year=2025/month=08/day=11"  # Base local directory
+# LOCAL_DIRECTORY = "transaction/year=2025/month=08/day=11"  # Base local directory
+
+# LOCAL_DIRECTORY = "new_analytics/bundleTxnLink"  # Base local directory
+# LOCAL_DIRECTORY = "new_analytics/transaction"  # Base local directory
+LOCAL_DIRECTORY = "new_analytics/bundleTxnLink/year=2025/month=08/day=11/hour=10"  # Base local directory
+# LOCAL_DIRECTORY = "transaction/year=2025/month=08/day=11"  # Base local directory
 
 
 # Create the blob service client

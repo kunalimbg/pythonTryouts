@@ -1,7 +1,7 @@
 import json
 
 # Step 1: Read the JSON file
-with open('products.bundles.json', 'r') as f:
+with open('/home/kunal/learn/pythonTryouts/bundles_code/products.bundles.json', 'r') as f:
     documents = json.load(f)
 
 # Step 2: Extract all _id values
