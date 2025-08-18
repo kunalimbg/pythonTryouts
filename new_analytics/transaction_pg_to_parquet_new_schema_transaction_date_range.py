@@ -369,4 +369,4 @@ if __name__ == "__main__":
     print(f"🎁 Total bundleTxnLink record count: {total_bundle_count}")
     print(f"🛍️ Total transaction_bundle_product_links record count: {total_txn_bundle_product_count}")
 
-    # python3 ./new_analytics/transaction_pg_to_parquet_new_schema_transaction_working.py --start_date 09-05-25 --end_date 15-08-25
+    # python3 ./new_analytics/transaction_pg_to_parquet_new_schema_transaction_date_range.py --start_date 15-08-25 --end_date 17-08-25

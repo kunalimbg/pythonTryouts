@@ -12,7 +12,7 @@ CONTAINER_NAME = "mycont"
 
 # LOCAL_DIRECTORY = "new_analytics/bundleTxnLink"  # Base local directory
 # LOCAL_DIRECTORY = "new_analytics/transaction"  # Base local directory
-LOCAL_DIRECTORY = "new_analytics/bundleTxnLink/year=2025/month=08/day=11/hour=10"  # Base local directory
+LOCAL_DIRECTORY = "new_analytics"  # Base local directory
 # LOCAL_DIRECTORY = "transaction/year=2025/month=08/day=11"  # Base local directory
 
 
