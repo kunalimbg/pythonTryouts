@@ -141,7 +141,7 @@ with SSHTunnelForwarder(
     cur_local = conn_local.cursor()
 
     # Get min and max of createdAt
-    target_date = date(2025, 8, 14)  # Change this to your desired date
+    target_date = date(2025, 9, 15)  # Change this to your desired date
     next_day = target_date + timedelta(days=1)
 
     cur.execute(

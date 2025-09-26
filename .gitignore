@@ -1,3 +1,6 @@
 transaction/
 bundleTxnLink/
 *.json
+new_analytics/bundleTxnLink/
+new_analytics/transaction/
+new_analytics/txnBundleProductLink/
